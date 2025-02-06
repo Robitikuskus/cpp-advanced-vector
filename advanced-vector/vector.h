@@ -5,6 +5,13 @@
 #include <utility>
 #include <memory>
 
+#define MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, count) \
+    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) { \
+        std::uninitialized_move_n((old_begin), (count), (new_begin)); \
+    } else { \
+        std::uninitialized_copy_n((old_begin), (count), (new_begin)); \
+    }
+
 template <typename T>
 class RawMemory;
 
@@ -14,7 +21,6 @@ public:
     using iterator = T*;
     using const_iterator = const T*;
 
-    // Iterators
     iterator begin() noexcept {
         return data_.GetAddress();
     }
@@ -68,12 +74,15 @@ public:
                 Vector tmp(rhs);
                 Swap(tmp);
             } else {
+                T* left = data_.GetAddress();
+                const T* right = rhs.data_.GetAddress();
+
                 if (rhs.size_ > size_) {
-                    std::copy(rhs.data_.GetAddress(), rhs.data_.GetAddress() + size_, data_.GetAddress());
-                    std::uninitialized_copy(rhs.data_.GetAddress() + size_, rhs.data_.GetAddress() + rhs.size_, data_.GetAddress() + size_);
+                    std::copy(right, right + size_, left);
+                    std::uninitialized_copy(right + size_, right + rhs.size_, left + size_);
                 } else {
-                    std::copy(rhs.data_.GetAddress(), rhs.data_.GetAddress() + rhs.size_, data_.GetAddress());
-                    std::destroy_n(data_.GetAddress() + rhs.size_, size_ - rhs.size_);
+                    std::copy(right, right + rhs.size_, left);
+                    std::destroy_n(left + rhs.size_, size_ - rhs.size_);
                 }
                 size_ = rhs.size_;
             }
@@ -104,11 +113,7 @@ public:
         T* new_begin = new_data.GetAddress();
         T* old_begin = data_.GetAddress();
 
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(old_begin, size_, new_begin);
-        } else {
-            std::uninitialized_copy_n(old_begin, size_, new_begin);
-        }
+        MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, size_);
 
         std::destroy_n(old_begin, size_);
         data_.Swap(new_data);
@@ -138,29 +143,7 @@ public:
 
     template <typename... Args>
     T& EmplaceBack(Args&&... elem) {
-        if (size_ < data_.Capacity()) {
-            std::construct_at(data_.GetAddress() + size_, std::forward<Args>(elem)...);
-            ++size_;
-            return data_[size_ - 1];
-        }
-
-        RawMemory<T> new_data(size_ == 0 ? 1 : 2 * size_);
-        T* new_begin = new_data.GetAddress();
-        T* old_begin = data_.GetAddress();
-
-        std::construct_at(new_begin + size_, std::forward<Args>(elem)...);
-
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(old_begin, size_, new_begin);
-        } else {
-            std::uninitialized_copy_n(old_begin, size_, new_begin);
-        }
-
-        std::destroy_n(old_begin, size_);
-        data_.Swap(new_data);
-        
-        ++size_;
-        return data_[size_ - 1];
+        return *Emplace(end(), std::forward<Args>(elem)...);
     }
 
     template <typename... Args>
@@ -187,19 +170,9 @@ public:
         T* old_begin = data_.GetAddress();
         iterator new_insert_pos = new_begin + insert_index;
 
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(old_begin, insert_index, new_begin);
-        } else {
-            std::uninitialized_copy_n(old_begin, insert_index, new_begin);
-        }
-
+        MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, insert_index);
         std::construct_at(new_insert_pos, std::forward<Args>(args)...);
-
-        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
-            std::uninitialized_move_n(old_begin + insert_index, size_ - insert_index, new_insert_pos + 1);
-        } else {
-            std::uninitialized_copy_n(old_begin + insert_index, size_ - insert_index, new_insert_pos + 1);
-        }
+        MOVE_OR_COPY_IF_NOEXCEPT(old_begin + insert_index, new_insert_pos + 1, size_ - insert_index);
 
         std::destroy_n(old_begin, size_);
         data_.Swap(new_data);
