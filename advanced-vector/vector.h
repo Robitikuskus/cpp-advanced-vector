@@ -5,13 +5,6 @@
 #include <utility>
 #include <memory>
 
-#define MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, count) \
-    if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) { \
-        std::uninitialized_move_n((old_begin), (count), (new_begin)); \
-    } else { \
-        std::uninitialized_copy_n((old_begin), (count), (new_begin)); \
-    }
-
 template <typename T>
 class RawMemory;
 
@@ -113,7 +106,7 @@ public:
         T* new_begin = new_data.GetAddress();
         T* old_begin = data_.GetAddress();
 
-        MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, size_);
+        MoveOrCopy(old_begin, new_begin, size_);
 
         std::destroy_n(old_begin, size_);
         data_.Swap(new_data);
@@ -170,9 +163,9 @@ public:
         T* old_begin = data_.GetAddress();
         iterator new_insert_pos = new_begin + insert_index;
 
-        MOVE_OR_COPY_IF_NOEXCEPT(old_begin, new_begin, insert_index);
+        MoveOrCopy(old_begin, new_begin, insert_index);
         std::construct_at(new_insert_pos, std::forward<Args>(args)...);
-        MOVE_OR_COPY_IF_NOEXCEPT(old_begin + insert_index, new_insert_pos + 1, size_ - insert_index);
+        MoveOrCopy(old_begin + insert_index, new_insert_pos + 1, size_ - insert_index);
 
         std::destroy_n(old_begin, size_);
         data_.Swap(new_data);
@@ -220,6 +213,14 @@ public:
     }
 
 private:
+    void MoveOrCopy(iterator old_begin, iterator new_begin, size_t count) {
+        if constexpr (std::is_nothrow_move_constructible_v<T> || !std::is_copy_constructible_v<T>) {
+            std::uninitialized_move_n(old_begin, count, new_begin);
+        } else {
+            std::uninitialized_copy_n(old_begin, count, new_begin);
+        }
+    }
+
     RawMemory<T> data_;
     size_t size_ = 0;
 };
